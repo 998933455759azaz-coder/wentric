@@ -603,6 +603,220 @@ bot.on("message", async (msg) => {
     );
   }
 
+  // ---- Keyboard button handlers ----
+  const text = msg.text.trim();
+  const userId = msg.from.id;
+  const chatId = msg.chat.id;
+
+  // User menu buttons
+  if (text === "👤 Mening profilim") {
+    const member = await getMemberByTelegramId(userId);
+    if (!member) return bot.sendMessage(chatId, "Siz hali ro'yxatga olinmagansiz.");
+    try {
+      await bot.sendChatAction(chatId, "upload_photo");
+      const cardBuf = await generateCard(member);
+      bot.sendPhoto(chatId, cardBuf, {
+        caption: `👤 *${member.full_name}*\n🎭 ${member.role || "—"}\n🪪 ${member.license_number || "Berilmagan"}\n📅 ${member.joined_date}${member.phone ? "\n📞 " + member.phone : ""}${member.age ? "\n🎂 " + member.age + " yosh" : ""}${member.bio ? "\n📝 " + member.bio : ""}\n\n/editprofile — yangilash`,
+        parse_mode: "Markdown",
+      });
+    } catch (e) { bot.sendMessage(chatId, "Xato: " + e.message); }
+    return;
+  }
+
+  if (text === "📊 Dashboard") {
+    const member = await getMemberByTelegramId(userId);
+    if (!member) return bot.sendMessage(chatId, "Siz hali ro'yxatga olinmagansiz.");
+    db.all("SELECT * FROM tasks WHERE member_id = ? ORDER BY id DESC", [member.id], (err, tasks) => {
+      const pending = (tasks || []).filter((t) => t.status === "pending").length;
+      const inProgress = (tasks || []).filter((t) => t.status === "in_progress").length;
+      const done = (tasks || []).filter((t) => t.status === "done").length;
+      bot.sendMessage(
+        chatId,
+        `📊 *Dashboard — ${member.full_name}*\n\n🎭 Rol: ${member.role || "—"}\n🪪 Litsenziya: ${member.license_number || "Berilmagan"}\n🏢 Rezident: ${member.is_resident ? "Ha" : "Yo'q"}\n\n📋 *Vazifalar:*\n⏳ Boshlanmagan: ${pending}\n🔄 Jarayonda: ${inProgress}\n✅ Tugatilgan: ${done}\n📋 Jami: ${tasks?.length || 0}`,
+        { parse_mode: "Markdown", ...dashboardInline() }
+      );
+    });
+    return;
+  }
+
+  if (text === "📋 Mening vazifalarim") {
+    const member = await getMemberByTelegramId(userId);
+    if (!member) return bot.sendMessage(chatId, "Siz hali ro'yxatga olinmagansiz.");
+    db.all("SELECT * FROM tasks WHERE member_id = ? ORDER BY id DESC", [member.id], (err, tasks) => {
+      if (err || !tasks?.length) return bot.sendMessage(chatId, "Sizga vazifa biriktirilmagan.");
+      const list = tasks.map((t, i) => {
+        const st = { pending: "⏳", in_progress: "🔄", done: "✅", cancelled: "❌" }[t.status] || "⏳";
+        return `${st} ${i + 1}. ${t.title}\n   📅 ${t.deadline || "Muddat yo'q"}\n   ID: ${t.id}`;
+      }).join("\n\n");
+      bot.sendMessage(chatId, `📋 *Sizning vazifalaringiz:*\n\n${list}\n\nStatus o'zgartirish: /taskstatus <id>`, { parse_mode: "Markdown" });
+    });
+    return;
+  }
+
+  if (text === "🏢 Jamoa haqida") {
+    db.get("SELECT about FROM team_info WHERE id = 1", (err, row) => {
+      bot.sendMessage(chatId, `ℹ️ *Jamoa haqida*\n\n${row?.about || "Ma'lumot yo'q."}`, { parse_mode: "Markdown" });
+    });
+    return;
+  }
+
+  if (text === "📜 Tarix") {
+    db.get("SELECT history FROM team_info WHERE id = 1", (err, row) => {
+      bot.sendMessage(chatId, `📜 *Jamoa tarixi*\n\n${row?.history || "Ma'lumot yo'q."}`, { parse_mode: "Markdown" });
+    });
+    return;
+  }
+
+  if (text === "🪪 Litsenziya") {
+    const member = await getMemberByTelegramId(userId);
+    if (!member) return bot.sendMessage(chatId, "Siz hali ro'yxatga olinmagansiz.");
+    try {
+      await bot.sendChatAction(chatId, "upload_photo");
+      const cardBuf = await generateCard(member);
+      bot.sendPhoto(chatId, cardBuf, { caption: `🪪 *${member.full_name}*\n🪪 ${member.license_number || "Berilmagan"}`, parse_mode: "Markdown" });
+    } catch (e) { bot.sendMessage(chatId, "Xato: " + e.message); }
+    return;
+  }
+
+  // ---- Admin panel buttons ----
+  if (text === "📊 Statistika") {
+    if (!(await isUserAdmin(userId))) return;
+    db.get("SELECT COUNT(*) as total, SUM(is_blocked) as blocked, SUM(is_resident) as residents, SUM(is_admin) as admins FROM members", (err, s) => {
+      db.get("SELECT COUNT(*) as tasks, SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done FROM tasks", (err2, t) => {
+        bot.sendMessage(chatId, `📊 *Statistika*\n\n👥 A'zolar: ${s?.total || 0}\n🚫 Bloklangan: ${s?.blocked || 0}\n🏢 Rezidentlar: ${s?.residents || 0}\n🔐 Adminlar: ${s?.admins || 0}\n\n📋 Vazifalar: ${t?.tasks || 0}\n✅ Tugatilgan: ${t?.done || 0}`, { parse_mode: "Markdown" });
+      });
+    });
+    return;
+  }
+
+  if (text === "👥 A'zolar ro'yxati") {
+    if (!(await isUserAdmin(userId))) return;
+    db.all("SELECT * FROM members ORDER BY id", (err, rows) => {
+      if (err || !rows?.length) return bot.sendMessage(chatId, "Hozircha a'zolar yo'q.");
+      const list = rows.map((m, i) => `${i + 1}. ${m.full_name} — ${m.role || "—"} (${m.license_number || "—"})${m.is_blocked ? " 🚫" : ""}${m.is_admin ? " 🔑" : ""}`).join("\n");
+      bot.sendMessage(chatId, `📋 *Jamoa a'zolari (${rows.length}):*\n\n${list}`, { parse_mode: "Markdown" });
+    });
+    return;
+  }
+
+  if (text === "➕ A'zo qo'shish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Foydalanuvchiga reply qiling va /add ni bosing.\nYoki: /add <telegram_id>");
+    return;
+  }
+
+  if (text === "➕ Rezident qo'shish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Foydalanuvchiga reply qiling va /addresident ni bosing.");
+    return;
+  }
+
+  if (text === "🚫 Bloklash") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Format: /block <telegram_id>");
+    return;
+  }
+
+  if (text === "✅ Blokdan chiqarish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Format: /unblock <telegram_id>");
+    return;
+  }
+
+  if (text === "🔑 Admin berish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Format: /makeadmin <telegram_id>");
+    return;
+  }
+
+  if (text === "❌ Admin olish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Format: /removeadmin <telegram_id>");
+    return;
+  }
+
+  if (text === "📋 Vazifa biriktirish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Foydalanuvchiga reply qiling va /assigntask ni bosing.");
+    return;
+  }
+
+  if (text === "📋 Vazifalar ro'yxati") {
+    if (!(await isUserAdmin(userId))) return;
+    db.all("SELECT t.*, m.full_name FROM tasks t LEFT JOIN members m ON t.member_id = m.id ORDER BY t.id DESC", (err, rows) => {
+      if (err || !rows?.length) return bot.sendMessage(chatId, "Vazifalar yo'q.");
+      const list = rows.map((t, i) => {
+        const st = { pending: "⏳", in_progress: "🔄", done: "✅", cancelled: "❌" }[t.status] || "⏳";
+        return `${st} ${i + 1}. ${t.title}\n   👤 ${t.full_name || "—"}\n   📅 ${t.deadline || "—"}`;
+      }).join("\n\n");
+      bot.sendMessage(chatId, `📋 *Barcha vazifalar (${rows.length}):*\n\n${list}`, { parse_mode: "Markdown" });
+    });
+    return;
+  }
+
+  if (text === "🪪 Litsenziya berish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Format: /givelicense <telegram_id>");
+    return;
+  }
+
+  if (text === "🎭 Rollar") {
+    if (!(await isUserAdmin(userId))) return;
+    const list = ROLES.map((r, i) => `${i + 1}. ${r}`).join("\n");
+    bot.sendMessage(chatId, `🎭 *Mavjud rollar (${ROLES.length}):*\n\n${list}`, { parse_mode: "Markdown" });
+    return;
+  }
+
+  if (text === "🤖 AI sozlash") {
+    if (!(await isUserAdmin(userId))) return;
+    const provider = (await getSetting("ai_provider")) || "local";
+    const hasKey = await getSetting("ai_api_key");
+    bot.sendMessage(chatId, `🤖 *AI sozlamalari*\n\nProvider: *${provider}*\nAPI kalit: ${hasKey ? "✅ O'rnatilgan" : "❌ Yo'q"}`, { parse_mode: "Markdown", ...aiSettingsInline() });
+    return;
+  }
+
+  if (text === "⚙️ Sozlamalar") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "⚙️ *Sozlamalar*\n\n/setabout <matn> — Jamoa haqida\n/sethistory <matn> — Tarix\n/setkey <kalit> — AI API kalit\n/setprovider <gemini|openai|local> — AI provider", { parse_mode: "Markdown" });
+    return;
+  }
+
+  if (text === "📤 Backup") {
+    if (!(await isUserAdmin(userId))) return;
+    if (!fs.existsSync(DB_PATH)) return bot.sendMessage(chatId, "DB fayl topilmadi.");
+    bot.sendDocument(chatId, DB_PATH, { caption: `📦 Backup: ${new Date().toLocaleString("uz-UZ")}` });
+    return;
+  }
+
+  if (text === "📢 Xabar yuborish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Format: /broadcast <matn>\n\nBarcha faol a'zolarga xabar yuboriladi.");
+    return;
+  }
+
+  if (text === "🔍 A'zo qidirish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "Format: /search <ism yoki ID yoki telefon>");
+    return;
+  }
+
+  if (text === "📈 AI tahlil") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "🔍 Tahlil boshlandi...");
+    await bot.sendChatAction(chatId, "typing");
+    db.all("SELECT * FROM chat_logs ORDER BY id DESC LIMIT 500", async (err, rows) => {
+      if (err || !rows?.length) return bot.sendMessage(chatId, "Hozircha tahlil uchun yozuvlar yo'q.");
+      const report = await analyzeMessages(rows);
+      bot.sendMessage(chatId, report);
+    });
+    return;
+  }
+
+  if (text === "🏠 Bosh menyu") {
+    bot.sendMessage(chatId, "🏠 Bosh menyu", mainMenu());
+    return;
+  }
+
   const sess = getSession(msg.from.id);
   if (!sess) return;
 
