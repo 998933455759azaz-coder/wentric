@@ -3,7 +3,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const cron = require("node-cron");
 const fs = require("fs");
 const { db, init, DB_PATH, ROLES, getSetting, setSetting } = require("./db");
-const { textCard } = require("./card");
+const { textCard, taskCard } = require("./card");
 const { analyzeMessages, testAI } = require("./ai");
 const {
   mainMenu, adminPanel, rolesInline, taskStatusInline,
@@ -104,11 +104,33 @@ ${member ? `\n✅ Siz ro'yxatdasiz: *${member.role || "A'zo"}*` : "\nℹ Siz hal
 
 ${isAdmin(userId) ? "\n🔐 Admin panel: /admin" : ""}`;
 
-  if (START_IMAGE) {
-    bot.sendPhoto(chatId, START_IMAGE, { caption: intro, parse_mode: "Markdown", ...mainMenu() });
+  const startImage = (await getSetting("start_image")) || START_IMAGE;
+  if (startImage) {
+    bot.sendPhoto(chatId, startImage, { caption: intro, parse_mode: "Markdown", ...mainMenu() });
   } else {
     bot.sendMessage(chatId, intro, { parse_mode: "Markdown", ...mainMenu() });
   }
+});
+
+// ============================================================
+// /setstartimage — admin sets start image via forward or file_id
+// ============================================================
+bot.onText(/^\/setstartimage$/, async (msg) => {
+  if (!(await isUserAdmin(msg.from.id))) return;
+  if (msg.reply_to_message && msg.reply_to_message.photo) {
+    const fileId = msg.reply_to_message.photo[msg.reply_to_message.photo.length - 1].file_id;
+    await setSetting("start_image", fileId);
+    bot.sendMessage(msg.chat.id, `✅ Start rasmi o'rnatildi.\n\nFile ID:\n\`${fileId}\`\n\nEndi /start bosilganda bu rasm chiqadi.`, { parse_mode: "Markdown" });
+  } else {
+    bot.sendMessage(msg.chat.id, "Rasmni forward qiling va unga reply berib /setstartimage ni bosing.\nYoki /setstartimage <file_id> ko'rinishida kiriting.");
+  }
+});
+
+bot.onText(/^\/setstartimage\s+(.+)$/, async (msg, match) => {
+  if (!(await isUserAdmin(msg.from.id))) return;
+  const fileId = match[1].trim();
+  await setSetting("start_image", fileId);
+  bot.sendMessage(msg.chat.id, `✅ Start rasmi o'rnatildi.\n\nFile ID: \`${fileId}\``, { parse_mode: "Markdown" });
 });
 
 // ============================================================
@@ -241,13 +263,8 @@ bot.onText(/^\/mytasks$/, async (msg) => {
   if (!member) return bot.sendMessage(msg.chat.id, "Siz hali ro'yxatga olinmagansiz.");
   db.all("SELECT * FROM tasks WHERE member_id = ? ORDER BY id DESC", [member.id], (err, tasks) => {
     if (err || !tasks?.length) return bot.sendMessage(msg.chat.id, "Sizga vazifa biriktirilmagan.");
-    const list = tasks.map((t, i) => {
-      const status = { pending: "⏳", in_progress: "🔄", done: "✅", cancelled: "❌" }[t.status] || "⏳";
-      return `${status} ${i + 1}. ${t.title}\n   📅 ${t.deadline || "Muddat yo'q"}\n   ID: ${t.id}`;
-    }).join("\n\n");
-    bot.sendMessage(msg.chat.id, `📋 *Sizning vazifalaringiz:*\n\n${list}\n\nVazifa statusini o'zgartirish: /taskstatus <id>`, {
-      parse_mode: "Markdown",
-    });
+    const list = tasks.map((t) => taskCard(t, member)).join("\n\n");
+    bot.sendMessage(msg.chat.id, list + "\n\nStatus o'zgartirish: /taskstatus <id>");
   });
 });
 
@@ -647,7 +664,7 @@ bot.on("new_chat_members", async (msg) => {
 bot.onText(/^\/help$/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
-    `📖 *Buyruqlar ro'yxati*\n\n*Foydalanuvchi:*\n/start — Boshlash\n/profile — Profilim\n/editprofile — Profilni yangilash\n/dashboard — Dashboard\n/mytasks — Vazifalarim\n/taskstatus <id> — Vazifa holati\n/setrole — Rol tanlash\n/litsenziy <ism> — Kartochka\n/about — Jamoa haqida\n/history — Tarix\n/list — A'zolar\n/who — Kim bu (reply)\n\n*Admin:*\n/admin — Admin panel\n/add — A'zo qo'shish (reply)\n/addresident — Rezident (reply)\n/assigntask — Vazifa (reply)\n/block <id> — Bloklash\n/unblock <id> — Blokdan chiqarish\n/makeadmin <id> — Admin berish\n/removeadmin <id> — Admin olish\n/deletemember <id> — O'chirish\n/givelicense <id> — Litsenziya\n/search <q> — Qidirish\n/stats — Statistika\n/broadcast <text> — Xabar yuborish\n/roles — Rollar\n/setrole <id> — Rol berish\n/ai — AI sozlash\n/setkey <key> — AI kalit\n/setprovider <p> — AI provider\n/testai — AI test\n/analyze — Tahlil\n/backup — Backup\n/setabout <text> — Jamoa haqida\n/sethistory <text> — Tarix\n/help — Yordam`,
+    `📖 *Buyruqlar ro'yxati*\n\n*Foydalanuvchi:*\n/start — Boshlash\n/profile — Profilim\n/editprofile — Profilni yangilash\n/setphoto — Profil rasmi (reply)\n/dashboard — Dashboard\n/mytasks — Vazifalarim\n/taskstatus <id> — Vazifa holati\n/setrole — Rol tanlash\n/litsenziy <ism> — Kartochka\n/about — Jamoa haqida\n/history — Tarix\n/list — A'zolar\n/who — Kim bu (reply)\n\n*Admin:*\n/admin — Admin panel\n/add — A'zo qo'shish (reply)\n/addresident — Rezident (reply)\n/assigntask — Vazifa (reply)\n/block <id> — Bloklash\n/unblock <id> — Blokdan chiqarish\n/makeadmin <id> — Admin berish\n/removeadmin <id> — Admin olish\n/deletemember <id> — O'chirish\n/givelicense <id> — Litsenziya\n/search <q> — Qidirish\n/stats — Statistika\n/broadcast <text> — Xabar yuborish\n/roles — Rollar\n/setrole <id> — Rol berish\n/ai — AI sozlash\n/setkey <key> — AI kalit\n/setprovider <p> — AI provider\n/testai — AI test\n/analyze — Tahlil\n/backup — Backup\n/setstartimage — Start rasmi (reply)\n/setphoto <id> — A'zo rasmi (reply)\n/setabout <text> — Jamoa haqida\n/sethistory <text> — Tarix\n/help — Yordam`,
     { parse_mode: "Markdown" }
   );
 });
@@ -706,11 +723,8 @@ bot.on("message", async (msg) => {
     if (!member) return bot.sendMessage(chatId, "Siz hali ro'yxatga olinmagansiz.");
     db.all("SELECT * FROM tasks WHERE member_id = ? ORDER BY id DESC", [member.id], (err, tasks) => {
       if (err || !tasks?.length) return bot.sendMessage(chatId, "Sizga vazifa biriktirilmagan.");
-      const list = tasks.map((t, i) => {
-        const st = { pending: "⏳", in_progress: "🔄", done: "✅", cancelled: "❌" }[t.status] || "⏳";
-        return `${st} ${i + 1}. ${t.title}\n   📅 ${t.deadline || "Muddat yo'q"}\n   ID: ${t.id}`;
-      }).join("\n\n");
-      bot.sendMessage(chatId, `📋 *Sizning vazifalaringiz:*\n\n${list}\n\nStatus o'zgartirish: /taskstatus <id>`, { parse_mode: "Markdown" });
+      const list = tasks.map((t) => taskCard(t, member)).join("\n\n");
+      bot.sendMessage(chatId, list + "\n\nStatus o'zgartirish: /taskstatus <id>");
     });
     return;
   }
@@ -805,13 +819,10 @@ bot.on("message", async (msg) => {
 
   if (text === "📋 Vazifalar ro'yxati") {
     if (!(await isUserAdmin(userId))) return;
-    db.all("SELECT t.*, m.full_name FROM tasks t LEFT JOIN members m ON t.member_id = m.id ORDER BY t.id DESC", (err, rows) => {
+    db.all("SELECT t.*, m.full_name, m.role FROM tasks t LEFT JOIN members m ON t.member_id = m.id ORDER BY t.id DESC", (err, rows) => {
       if (err || !rows?.length) return bot.sendMessage(chatId, "Vazifalar yo'q.");
-      const list = rows.map((t, i) => {
-        const st = { pending: "⏳", in_progress: "🔄", done: "✅", cancelled: "❌" }[t.status] || "⏳";
-        return `${st} ${i + 1}. ${t.title}\n   👤 ${t.full_name || "—"}\n   📅 ${t.deadline || "—"}`;
-      }).join("\n\n");
-      bot.sendMessage(chatId, `📋 *Barcha vazifalar (${rows.length}):*\n\n${list}`, { parse_mode: "Markdown" });
+      const list = rows.map((t) => taskCard(t, { full_name: t.full_name, role: t.role })).join("\n\n");
+      bot.sendMessage(chatId, list);
     });
     return;
   }
@@ -840,6 +851,17 @@ bot.on("message", async (msg) => {
   if (text === "⚙️ Sozlamalar") {
     if (!(await isUserAdmin(userId))) return;
     bot.sendMessage(chatId, "⚙️ *Sozlamalar*\n\n/setabout <matn> — Jamoa haqida\n/sethistory <matn> — Tarix\n/setkey <kalit> — AI API kalit\n/setprovider <gemini|openai|local> — AI provider", { parse_mode: "Markdown" });
+    return;
+  }
+
+  if (text === "🖼 Start rasmi") {
+    if (!(await isUserAdmin(userId))) return;
+    const current = await getSetting("start_image");
+    bot.sendMessage(
+      chatId,
+      `🖼 *Start rasmi sozlamasi*\n\nJoriy holat: ${current ? "✅ O'rnatilgan" : "❌ Yo'q"}\n\nRasmni forward qiling va unga reply berib /setstartimage ni bosing.\nYoki /setstartimage <file_id> ko'rinishida kiriting.`,
+      { parse_mode: "Markdown" }
+    );
     return;
   }
 
