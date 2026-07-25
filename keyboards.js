@@ -135,6 +135,18 @@ function confirmInline(action, id) {
   };
 }
 
+// ---- Group join approval inline ----
+function approveInline(telegramId) {
+  return {
+    inline_keyboard: [
+      [
+        { text: "✅ Tasdiqlash", callback_data: "approve_" + telegramId },
+        { text: "🚫 Chiqarib yuborish", callback_data: "kick_" + telegramId },
+      ],
+    ],
+  };
+}
+
 module.exports = {
   mainMenu,
   adminPanel,
@@ -144,4 +156,5 @@ module.exports = {
   dashboardInline,
   aiSettingsInline,
   confirmInline,
+  approveInline,
 };

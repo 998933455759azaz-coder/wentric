@@ -90,6 +90,16 @@ function init() {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS pending_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id INTEGER,
+      telegram_id INTEGER,
+      full_name TEXT,
+      username TEXT,
+      joined_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )`);
+
     db.run(`CREATE INDEX IF NOT EXISTS idx_members_telegram ON members(telegram_id)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_members_license ON members(license_number)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_members_name ON members(full_name)`);

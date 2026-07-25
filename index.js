@@ -3,11 +3,12 @@ const TelegramBot = require("node-telegram-bot-api");
 const cron = require("node-cron");
 const fs = require("fs");
 const { db, init, DB_PATH, ROLES, getSetting, setSetting } = require("./db");
-const { generateCard } = require("./card");
+const { textCard } = require("./card");
 const { analyzeMessages, testAI } = require("./ai");
 const {
   mainMenu, adminPanel, rolesInline, taskStatusInline,
   memberActionInline, dashboardInline, aiSettingsInline, confirmInline,
+  approveInline,
 } = require("./keyboards");
 
 const TOKEN = process.env.BOT_TOKEN || "";
@@ -136,41 +137,32 @@ bot.onText(/^\/who(\s+\d+)?$/, async (msg, match) => {
 
   const member = await getMemberByTelegramId(targetId);
   if (!member) {
-    // Unknown person card
     const unknownMember = {
-      full_name: msg.reply_to_message?.from?.first_name + " " + (msg.reply_to_message?.from?.last_name || "") || "Noma'lum",
+      full_name: (msg.reply_to_message?.from?.first_name + " " + (msg.reply_to_message?.from?.last_name || "")).trim() || "Noma'lum",
       role: "Rezident emas / Noma'lum",
       license_number: "Berilmagan",
       joined_date: "—",
       phone: null,
       photo_url: null,
+      telegram_id: targetId,
+      is_blocked: false,
+      is_resident: false,
     };
-    try {
-      await bot.sendChatAction(msg.chat.id, "upload_photo");
-      const cardBuf = await generateCard(unknownMember, true);
-      bot.sendPhoto(msg.chat.id, cardBuf, {
-        caption: `⚠ *Noma'lum shaxs*\n\nBu shaxs rezidentlikka ega emas va wentric.uz ro'yxatida topilmadi.\n\nTelegram ID: \`${targetId}\`\nIsm: ${unknownMember.full_name}`,
-        parse_mode: "Markdown",
-        reply_to_message_id: msg.reply_to_message?.message_id,
-      });
-    } catch (e) {
-      bot.sendMessage(msg.chat.id, "Kartochka yaratishda xato: " + e.message);
-    }
+    bot.sendMessage(msg.chat.id, textCard(unknownMember, true), {
+      reply_to_message_id: msg.reply_to_message?.message_id,
+    });
     return;
   }
 
-  try {
-    await bot.sendChatAction(msg.chat.id, "upload_photo");
-    const cardBuf = await generateCard(member, !member.license_number);
-    const status = member.is_blocked ? "🚫 Bloklangan" : "✅ Faol";
-    const resident = member.is_resident ? "🏢 Rezident" : "👤 A'zo";
-    bot.sendPhoto(msg.chat.id, cardBuf, {
-      caption: `🪪 *${member.full_name}*\n🎭 ${member.role || "—"}\n🪪 Litsenziya: ${member.license_number || "Berilmagan"}\n📅 Qo'shilgan: ${member.joined_date}\n${member.phone ? "📞 " + member.phone + "\n" : ""}${member.bio ? "📝 " + member.bio + "\n" : ""}\n${resident} | ${status}\n🆔 \`${member.telegram_id}\``,
-      parse_mode: "Markdown",
+  if (member.photo_url) {
+    bot.sendPhoto(msg.chat.id, member.photo_url, {
+      caption: textCard(member),
       reply_to_message_id: msg.reply_to_message?.message_id,
     });
-  } catch (e) {
-    bot.sendMessage(msg.chat.id, "Xato: " + e.message);
+  } else {
+    bot.sendMessage(msg.chat.id, textCard(member), {
+      reply_to_message_id: msg.reply_to_message?.message_id,
+    });
   }
 });
 
@@ -184,14 +176,11 @@ bot.onText(/^\/litsenziy\s+(.+)$/, async (msg, match) => {
     [`%${query}%`, `%${query}%`],
     async (err, member) => {
       if (err || !member) return bot.sendMessage(msg.chat.id, `❌ "${query}" bo'yicha a'zo topilmadi.`);
-      try {
-        await bot.sendChatAction(msg.chat.id, "upload_photo");
-        const cardBuf = await generateCard(member);
-        bot.sendPhoto(msg.chat.id, cardBuf, {
-          caption: `🪪 *${member.full_name}*\n🎭 ${member.role || "—"}\n🪪 ${member.license_number}\n📅 ${member.joined_date}${member.phone ? "\n📞 " + member.phone : ""}${member.bio ? "\n📝 " + member.bio : ""}`,
-          parse_mode: "Markdown",
-        });
-      } catch (e) { bot.sendMessage(msg.chat.id, "Xato: " + e.message); }
+      if (member.photo_url) {
+        bot.sendPhoto(msg.chat.id, member.photo_url, { caption: textCard(member) });
+      } else {
+        bot.sendMessage(msg.chat.id, textCard(member));
+      }
     }
   );
 });
@@ -202,14 +191,12 @@ bot.onText(/^\/litsenziy\s+(.+)$/, async (msg, match) => {
 bot.onText(/^\/profile$/, async (msg) => {
   const member = await getMemberByTelegramId(msg.from.id);
   if (!member) return bot.sendMessage(msg.chat.id, "Siz hali ro'yxatga olinmagansiz.");
-  try {
-    await bot.sendChatAction(msg.chat.id, "upload_photo");
-    const cardBuf = await generateCard(member);
-    bot.sendPhoto(msg.chat.id, cardBuf, {
-      caption: `👤 *Sizning profilingiz*\n\n🪪 ${member.full_name}\n🎭 ${member.role || "—"}\n🪪 ${member.license_number || "Berilmagan"}\n📅 ${member.joined_date}${member.phone ? "\n📞 " + member.phone : ""}${member.age ? "\n🎂 " + member.age + " yosh" : ""}${member.bio ? "\n📝 " + member.bio : ""}\n\nProfilni yangilash uchun /editprofile`,
-      parse_mode: "Markdown",
-    });
-  } catch (e) { bot.sendMessage(msg.chat.id, "Xato: " + e.message); }
+  const cardText = textCard(member) + "\n\nProfilni yangilash: /editprofile\nProfil rasmi: /setphoto";
+  if (member.photo_url) {
+    bot.sendPhoto(msg.chat.id, member.photo_url, { caption: cardText });
+  } else {
+    bot.sendMessage(msg.chat.id, cardText);
+  }
 });
 
 // ============================================================
@@ -580,6 +567,83 @@ bot.onText(/^\/sethistory\s+(.+)$/, async (msg, match) => {
 // ============================================================
 // /help — full command list
 // ============================================================
+// ============================================================
+// /setphoto — set own profile photo (reply to a photo)
+// ============================================================
+bot.onText(/^\/setphoto$/, async (msg) => {
+  const member = await getMemberByTelegramId(msg.from.id);
+  if (!member) return bot.sendMessage(msg.chat.id, "Siz hali ro'yxatga olinmagansiz.");
+  if (!msg.reply_to_message || !msg.reply_to_message.photo) {
+    return bot.sendMessage(msg.chat.id, "Rasmga reply qiling va /setphoto ni bosing.\nYoki shunchaki rasm yuboring — avtomatik profilingizga biriktiriladi.");
+  }
+  const fileId = msg.reply_to_message.photo[msg.reply_to_message.photo.length - 1].file_id;
+  db.run("UPDATE members SET photo_url = ? WHERE telegram_id = ?", [fileId, msg.from.id], function () {
+    bot.sendMessage(msg.chat.id, this.changes ? "✅ Profil rasmi yangilandi." : "❌ Profil topilmadi.");
+  });
+});
+
+// ============================================================
+// /setphoto <id> — admin sets photo for member (reply to photo)
+// ============================================================
+bot.onText(/^\/setphoto\s+(\d+)$/, async (msg, match) => {
+  if (!(await isUserAdmin(msg.from.id))) return;
+  if (!msg.reply_to_message || !msg.reply_to_message.photo) return bot.sendMessage(msg.chat.id, "Rasmga reply qiling va /setphoto <id> ni bosing.");
+  const tid = Number(match[1]);
+  const fileId = msg.reply_to_message.photo[msg.reply_to_message.photo.length - 1].file_id;
+  db.run("UPDATE members SET photo_url = ? WHERE telegram_id = ?", [fileId, tid], function () {
+    bot.sendMessage(msg.chat.id, this.changes ? "✅ Profil rasmi yangilandi." : "Topilmadi.");
+  });
+});
+
+// ============================================================
+// Photo message handler — auto-set as profile photo
+// ============================================================
+bot.on("photo", async (msg) => {
+  if (msg.chat.type !== "private") return;
+  const member = await getMemberByTelegramId(msg.from.id);
+  if (!member) return;
+  const fileId = msg.photo[msg.photo.length - 1].file_id;
+  setSession(msg.from.id, { action: "set_photo_confirm", file_id: fileId });
+  bot.sendMessage(msg.chat.id, "📷 Bu rasmni profilingiz rasmi qilasizmi?", {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "✅ Ha, profil rasmi qilish", callback_data: "confirm_set_photo" },
+          { text: "❌ Yo'q", callback_data: "cancel_action" },
+        ],
+      ],
+    },
+  });
+});
+
+// ============================================================
+// Group join approval flow
+// ============================================================
+bot.on("new_chat_members", async (msg) => {
+  const chatId = msg.chat.id;
+  for (const newUser of msg.new_chat_members) {
+    if (newUser.is_bot) continue;
+    const member = await getMemberByTelegramId(newUser.id);
+    if (member && !member.is_blocked) {
+      bot.sendMessage(chatId, `✅ *${newUser.first_name}* — wentric.uz a'zosi. Xush kelibsiz!`, { parse_mode: "Markdown" });
+    } else {
+      db.run(
+        "INSERT OR IGNORE INTO pending_members (chat_id, telegram_id, full_name, username, joined_at) VALUES (?, ?, ?, ?, ?)",
+        [chatId, newUser.id, (newUser.first_name + " " + (newUser.last_name || "")).trim(), newUser.username, new Date().toISOString()]
+      );
+      const fullName = (newUser.first_name + " " + (newUser.last_name || "")).trim();
+      bot.sendMessage(
+        chatId,
+        `⚠ *Yangi foydalanuvchi!*\n\n👤 ${fullName}\n🆔 \`${newUser.id}\`\n🔗 @${newUser.username || "—"}\n\nBu shaxs wentric.uz ro'yxatida topilmadi. Tasdiqlang:`,
+        { parse_mode: "Markdown", reply_markup: approveInline(newUser.id) }
+      );
+    }
+  }
+});
+
+// ============================================================
+// /help — full command list
+// ============================================================
 bot.onText(/^\/help$/, (msg) => {
   bot.sendMessage(
     msg.chat.id,
@@ -612,14 +676,12 @@ bot.on("message", async (msg) => {
   if (text === "👤 Mening profilim") {
     const member = await getMemberByTelegramId(userId);
     if (!member) return bot.sendMessage(chatId, "Siz hali ro'yxatga olinmagansiz.");
-    try {
-      await bot.sendChatAction(chatId, "upload_photo");
-      const cardBuf = await generateCard(member);
-      bot.sendPhoto(chatId, cardBuf, {
-        caption: `👤 *${member.full_name}*\n🎭 ${member.role || "—"}\n🪪 ${member.license_number || "Berilmagan"}\n📅 ${member.joined_date}${member.phone ? "\n📞 " + member.phone : ""}${member.age ? "\n🎂 " + member.age + " yosh" : ""}${member.bio ? "\n📝 " + member.bio : ""}\n\n/editprofile — yangilash`,
-        parse_mode: "Markdown",
-      });
-    } catch (e) { bot.sendMessage(chatId, "Xato: " + e.message); }
+    const cardText = textCard(member) + "\n\n/editprofile — yangilash\n/setphoto — profil rasmi";
+    if (member.photo_url) {
+      bot.sendPhoto(chatId, member.photo_url, { caption: cardText });
+    } else {
+      bot.sendMessage(chatId, cardText);
+    }
     return;
   }
 
@@ -670,11 +732,11 @@ bot.on("message", async (msg) => {
   if (text === "🪪 Litsenziya") {
     const member = await getMemberByTelegramId(userId);
     if (!member) return bot.sendMessage(chatId, "Siz hali ro'yxatga olinmagansiz.");
-    try {
-      await bot.sendChatAction(chatId, "upload_photo");
-      const cardBuf = await generateCard(member);
-      bot.sendPhoto(chatId, cardBuf, { caption: `🪪 *${member.full_name}*\n🪪 ${member.license_number || "Berilmagan"}`, parse_mode: "Markdown" });
-    } catch (e) { bot.sendMessage(chatId, "Xato: " + e.message); }
+    if (member.photo_url) {
+      bot.sendPhoto(chatId, member.photo_url, { caption: textCard(member) });
+    } else {
+      bot.sendMessage(chatId, textCard(member));
+    }
     return;
   }
 
@@ -1043,10 +1105,12 @@ bot.on("callback_query", async (cq) => {
     } else if (data === "dash_profile") {
       const member = await getMemberByTelegramId(userId);
       if (!member) return bot.answerCallbackQuery(cq.id, { text: "Ro'yxatda emassiz" });
-      try {
-        const cardBuf = await generateCard(member);
-        bot.sendPhoto(chatId, cardBuf, { caption: `👤 ${member.full_name}\n🎭 ${member.role || "—"}` });
-      } catch {}
+      const cardText = textCard(member);
+      if (member.photo_url) {
+        bot.sendPhoto(chatId, member.photo_url, { caption: cardText });
+      } else {
+        bot.sendMessage(chatId, cardText);
+      }
     } else if (data === "dash_about") {
       db.get("SELECT about FROM team_info WHERE id = 1", (e, row) => {
         bot.sendMessage(chatId, `ℹ️ ${row?.about || "—"}`);
@@ -1058,6 +1122,47 @@ bot.on("callback_query", async (cq) => {
   if (data === "cancel_action") {
     clearSession(userId);
     return bot.answerCallbackQuery(cq.id, { text: "Bekor qilindi" });
+  }
+
+  // ---- Photo confirmation ----
+  if (data === "confirm_set_photo") {
+    const sess = getSession(userId);
+    if (!sess || !sess.file_id) return bot.answerCallbackQuery(cq.id, { text: "Rasm topilmadi" });
+    const fileId = sess.file_id;
+    db.run("UPDATE members SET photo_url = ? WHERE telegram_id = ?", [fileId, userId], function () {
+      if (this.changes) {
+        bot.answerCallbackQuery(cq.id, { text: "✅ Profil rasmi saqlandi" });
+        bot.sendMessage(chatId, "✅ Profil rasmi yangilandi.");
+      } else {
+        bot.answerCallbackQuery(cq.id, { text: "Profil topilmadi" });
+      }
+    });
+    clearSession(userId);
+    return;
+  }
+
+  // ---- Group join approval ----
+  if (data.startsWith("approve_")) {
+    if (!(await isUserAdmin(userId))) return bot.answerCallbackQuery(cq.id, { text: "Faqat admin" });
+    const tid = Number(data.replace("approve_", ""));
+    db.run("DELETE FROM pending_members WHERE telegram_id = ?", [tid]);
+    bot.answerCallbackQuery(cq.id, { text: "✅ Tasdiqlandi" });
+    bot.sendMessage(chatId, `✅ Foydalanuvchi tasdiqlandi. Endi ro'yxatga olish uchun /add ${tid} ni bosing.`);
+    return;
+  }
+
+  if (data.startsWith("kick_")) {
+    if (!(await isUserAdmin(userId))) return bot.answerCallbackQuery(cq.id, { text: "Faqat admin" });
+    const tid = Number(data.replace("kick_", ""));
+    db.run("DELETE FROM pending_members WHERE telegram_id = ?", [tid]);
+    try {
+      await bot.kickChatMember(chatId, tid);
+      bot.answerCallbackQuery(cq.id, { text: "🚫 Guruhdan chiqarildi" });
+      bot.sendMessage(chatId, `🚫 Foydalanuvchi (ID: ${tid}) guruhdan chiqarildi.`);
+    } catch (e) {
+      bot.answerCallbackQuery(cq.id, { text: "Xato: " + e.message });
+    }
+    return;
   }
 });
 
