@@ -91,14 +91,15 @@ bot.onText(/^\/start$/, async (msg) => {
   if (member) {
     const tgName = (msg.from.first_name + " " + (msg.from.last_name || "")).trim();
     const tgUsername = msg.from.username || null;
-    if (tgName && tgName !== member.full_name) {
+    const placeholder = !member.full_name || member.full_name === "—" || member.full_name === "Noma'lum";
+    if (tgName && (placeholder || tgName !== member.full_name)) {
       db.run("UPDATE members SET full_name = ? WHERE id = ?", [tgName, member.id]);
+      member.full_name = tgName;
     }
     if (tgUsername !== (member.username || null)) {
       db.run("UPDATE members SET username = ? WHERE id = ?", [tgUsername, member.id]);
+      member.username = tgUsername;
     }
-    member.full_name = tgName;
-    member.username = tgUsername;
   }
 
   const intro = `🏢 *wentric.uz rasmiy boti*
@@ -187,6 +188,7 @@ bot.onText(/^\/who(\s+\d+)?$/, async (msg, match) => {
       is_resident: false,
     };
     bot.sendMessage(msg.chat.id, textCard(unknownMember, true), {
+      parse_mode: "Markdown",
       reply_to_message_id: msg.reply_to_message?.message_id,
     });
     return;
@@ -195,10 +197,12 @@ bot.onText(/^\/who(\s+\d+)?$/, async (msg, match) => {
   if (member.photo_url) {
     bot.sendPhoto(msg.chat.id, member.photo_url, {
       caption: textCard(member),
+      parse_mode: "Markdown",
       reply_to_message_id: msg.reply_to_message?.message_id,
     });
   } else {
     bot.sendMessage(msg.chat.id, textCard(member), {
+      parse_mode: "Markdown",
       reply_to_message_id: msg.reply_to_message?.message_id,
     });
   }
@@ -215,9 +219,9 @@ bot.onText(/^\/litsenziy\s+(.+)$/, async (msg, match) => {
     async (err, member) => {
       if (err || !member) return bot.sendMessage(msg.chat.id, `❌ "${query}" bo'yicha a'zo topilmadi.`);
       if (member.photo_url) {
-        bot.sendPhoto(msg.chat.id, member.photo_url, { caption: textCard(member) });
+        bot.sendPhoto(msg.chat.id, member.photo_url, { caption: textCard(member), parse_mode: "Markdown" });
       } else {
-        bot.sendMessage(msg.chat.id, textCard(member));
+        bot.sendMessage(msg.chat.id, textCard(member), { parse_mode: "Markdown" });
       }
     }
   );
@@ -231,9 +235,9 @@ bot.onText(/^\/profile$/, async (msg) => {
   if (!member) return bot.sendMessage(msg.chat.id, "Siz hali ro'yxatga olinmagansiz.");
   const cardText = textCard(member) + "\n\nProfilni yangilash: /editprofile\nProfil rasmi: /setphoto";
   if (member.photo_url) {
-    bot.sendPhoto(msg.chat.id, member.photo_url, { caption: cardText });
+    bot.sendPhoto(msg.chat.id, member.photo_url, { caption: cardText, parse_mode: "Markdown" });
   } else {
-    bot.sendMessage(msg.chat.id, cardText);
+    bot.sendMessage(msg.chat.id, cardText, { parse_mode: "Markdown" });
   }
 });
 
@@ -280,7 +284,7 @@ bot.onText(/^\/mytasks$/, async (msg) => {
   db.all("SELECT * FROM tasks WHERE member_id = ? ORDER BY id DESC", [member.id], (err, tasks) => {
     if (err || !tasks?.length) return bot.sendMessage(msg.chat.id, "Sizga vazifa biriktirilmagan.");
     const list = tasks.map((t) => taskCard(t, member)).join("\n\n");
-    bot.sendMessage(msg.chat.id, list + "\n\nStatus o'zgartirish: /taskstatus <id>");
+    bot.sendMessage(msg.chat.id, list + "\n\nStatus o'zgartirish: /taskstatus <id>", { parse_mode: "Markdown" });
   });
 });
 
@@ -720,9 +724,9 @@ bot.on("message", async (msg) => {
     if (!member) return bot.sendMessage(chatId, "Siz hali ro'yxatga olinmagansiz.");
     const cardText = textCard(member) + "\n\n/editprofile — yangilash\n/setphoto — profil rasmi";
     if (member.photo_url) {
-      bot.sendPhoto(chatId, member.photo_url, { caption: cardText });
+      bot.sendPhoto(chatId, member.photo_url, { caption: cardText, parse_mode: "Markdown" });
     } else {
-      bot.sendMessage(chatId, cardText);
+      bot.sendMessage(chatId, cardText, { parse_mode: "Markdown" });
     }
     return;
   }
@@ -772,9 +776,9 @@ bot.on("message", async (msg) => {
     const member = await getMemberByTelegramId(userId);
     if (!member) return bot.sendMessage(chatId, "Siz hali ro'yxatga olinmagansiz.");
     if (member.photo_url) {
-      bot.sendPhoto(chatId, member.photo_url, { caption: textCard(member) });
+      bot.sendPhoto(chatId, member.photo_url, { caption: textCard(member), parse_mode: "Markdown" });
     } else {
-      bot.sendMessage(chatId, textCard(member));
+      bot.sendMessage(chatId, textCard(member), { parse_mode: "Markdown" });
     }
     return;
   }
@@ -1154,9 +1158,9 @@ bot.on("callback_query", async (cq) => {
       if (!member) return bot.answerCallbackQuery(cq.id, { text: "Ro'yxatda emassiz" });
       const cardText = textCard(member);
       if (member.photo_url) {
-        bot.sendPhoto(chatId, member.photo_url, { caption: cardText });
+        bot.sendPhoto(chatId, member.photo_url, { caption: cardText, parse_mode: "Markdown" });
       } else {
-        bot.sendMessage(chatId, cardText);
+        bot.sendMessage(chatId, cardText, { parse_mode: "Markdown" });
       }
     } else if (data === "dash_about") {
       db.get("SELECT about FROM team_info WHERE id = 1", (e, row) => {

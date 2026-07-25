@@ -1,12 +1,3 @@
-const B = "═";
-
-function line(ch, len) { return ch.repeat(len); }
-function center(str, width) {
-  str = String(str || "");
-  const total = Math.max(0, width - str.length);
-  const left = Math.floor(total / 2);
-  return " ".repeat(left) + str + " ".repeat(total - left);
-}
 function fmtDate(d) {
   if (!d) return "—";
   try {
@@ -16,39 +7,44 @@ function fmtDate(d) {
   } catch { return d; }
 }
 
+function esc(str) {
+  return String(str || "").replace(/[*_`\[\]]/g, "");
+}
+
 function textCard(member, isUnknown = false) {
-  const W = 44;
-  const status = isUnknown ? "⚠ UNVERIFIED" : (member.is_blocked ? "🚫 BLOCKED" : "🟢 ACTIVE");
+  const status = isUnknown
+    ? "⚠️ UNVERIFIED"
+    : member.is_blocked
+      ? "🚫 BLOCKED"
+      : "🟢 ACTIVE";
   const membership = member.is_resident ? "🏢 Resident" : "👤 Standard";
-  const name = member.full_name || "—";
-  const username = member.username ? " @" + member.username : "";
+  const name = member.full_name && member.full_name !== "—" ? member.full_name : "Unknown";
+  const username = member.username ? ` *@${esc(member.username)}*` : "";
 
   const rows = [
-    ["👤 Name", name + username],
-    ["💼 Role", member.role || "—"],
-    ["🪪 License", member.license_number || "Not Issued"],
-    ["🆔 ID", String(member.telegram_id || "—")],
-    ["🏅 Type", membership],
-    ["🟢 Status", status],
-    ["📅 Joined", fmtDate(member.joined_date)],
+    `👤 *Name:* ${esc(name)}${username}`,
+    `💼 *Role:* ${esc(member.role) || "—"}`,
+    `🪪 *License:* ${esc(member.license_number) || "Not Issued"}`,
+    `🆔 *ID:* \`${esc(member.telegram_id) || "—"}\``,
+    `🏅 *Type:* ${membership}`,
+    `🟢 *Status:* ${status}`,
+    `📅 *Joined:* ${fmtDate(member.joined_date)}`,
   ];
-  if (member.age) rows.push(["🎂 Age", String(member.age)]);
+  if (member.age) rows.push(`🎂 *Age:* ${esc(member.age)}`);
+  if (member.phone) rows.push(`📞 *Phone:* ${esc(member.phone)}`);
+  if (member.bio) rows.push(`📝 *Bio:* ${esc(member.bio)}`);
 
-  const out = [];
-  out.push("╔" + line(B, W) + "╗");
-  out.push("║" + center("🏢 WENTRIC COMPANY", W) + "║");
-  out.push("║" + center("Digital Identity Card", W) + "║");
-  out.push("╠" + line(B, W) + "╣");
-  for (const [label, val] of rows) {
-    out.push("║ " + label.padEnd(13) + " " + String(val).slice(0, W - 16) + " ║");
-  }
-  out.push("╚" + line(B, W) + "╝");
-  out.push(center("© 2026 Wentric Company", W));
-  return out.join("\n");
+  return (
+    "┌──────────────────────────────┐\n" +
+    "│  🏢 *WENTRIC COMPANY*        │\n" +
+    "│  *Digital Identity Card*     │\n" +
+    "└──────────────────────────────┘\n\n" +
+    rows.join("\n") +
+    "\n\n© 2026 Wentric Company"
+  );
 }
 
 function taskCard(task, member) {
-  const W = 44;
   const statusMap = {
     pending: "⏳ Pending",
     in_progress: "🔄 In Progress",
@@ -58,22 +54,19 @@ function taskCard(task, member) {
   const st = statusMap[task.status] || statusMap.pending;
 
   const rows = [
-    ["📌 Title", task.title || "—"],
-    ["👤 Assigned", member?.full_name || "—"],
-    ["📅 Deadline", task.deadline ? fmtDate(task.deadline) : "—"],
-    ["📊 Status", st],
-    ["🆔 Task ID", "#" + task.id],
+    `📌 *Title:* ${esc(task.title) || "—"}`,
+    `👤 *Assigned:* ${esc(member?.full_name) || "—"}`,
+    `📅 *Deadline:* ${task.deadline ? fmtDate(task.deadline) : "—"}`,
+    `📊 *Status:* ${st}`,
+    `🆔 *Task ID:* #${esc(task.id)}`,
   ];
 
-  const out = [];
-  out.push("╔" + line(B, W) + "╗");
-  out.push("║" + center("📋 WENTRIC TASK", W) + "║");
-  out.push("╠" + line(B, W) + "╣");
-  for (const [label, val] of rows) {
-    out.push("║ " + label.padEnd(13) + " " + String(val).slice(0, W - 16) + " ║");
-  }
-  out.push("╚" + line(B, W) + "╝");
-  return out.join("\n");
+  return (
+    "┌──────────────────────────────┐\n" +
+    "│  📋 *WENTRIC TASK*            │\n" +
+    "└──────────────────────────────┘\n\n" +
+    rows.join("\n")
+  );
 }
 
 module.exports = { textCard, taskCard };
