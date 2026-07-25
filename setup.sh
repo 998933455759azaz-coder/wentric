@@ -221,12 +221,57 @@ else
   print_warn "Tekshiruv o'tmadi, davom etamiz"
 fi
 
-# ---- 9. Ishga tushirish ----
-print_step "9-bosqich: Botni ishga tushirish"
+# ---- 9. systemd service o'rnatish ----
+print_step "9-bosqich: systemd service sozlash"
+
+SERVICE_NAME="wentric-bot"
+SERVICE_SRC="$PROJECT_DIR/${SERVICE_NAME}.service"
+SERVICE_DST="/etc/systemd/system/${SERVICE_NAME}.service"
+
+CURRENT_USER="$(whoami)"
+NODE_BIN="$(command -v node)"
+
+# service faylini to'ldirish
+sed -e "s|__USER__|${CURRENT_USER}|g" \
+    -e "s|__PROJECT_DIR__|${PROJECT_DIR}|g" \
+    -e "s|__NODE_BIN__|${NODE_BIN}|g" \
+    "$SERVICE_SRC" > "${SERVICE_SRC}.tmp"
+mv "${SERVICE_SRC}.tmp" "$SERVICE_SRC"
+print_ok "Service fayli sozlandi: $SERVICE_SRC"
+
+# systemd ga o'rnatish
+if [ -w /etc/systemd/system ]; then
+  cp "$SERVICE_SRC" "$SERVICE_DST"
+  systemctl daemon-reload
+  systemctl enable "${SERVICE_NAME}.service" 2>/dev/null
+  systemctl restart "${SERVICE_NAME}.service"
+  sleep 2
+  if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
+    print_ok "Bot systemd orqali ishga tushdi"
+    print_info "Holat:  systemctl status ${SERVICE_NAME}"
+    print_info "Log:   journalctl -u ${SERVICE_NAME} -f"
+    print_info "Stop:  sudo systemctl stop ${SERVICE_NAME}"
+    print_info "Start: sudo systemctl start ${SERVICE_NAME}"
+  else
+    print_err "Service ishga tushmadi — loglarni tekshiring:"
+    systemctl status "${SERVICE_NAME}.service" --no-pager -l | tail -20
+  fi
+else
+  print_warn "systemd ga o'rnatish uchun root huquqi kerak."
+  print_info "Ishga tushirish uchun quyidagi buyruqlarni bajaring:"
+  echo ""
+  echo "  sudo cp $SERVICE_SRC $SERVICE_DST"
+  echo "  sudo systemctl daemon-reload"
+  echo "  sudo systemctl enable ${SERVICE_NAME}"
+  echo "  sudo systemctl start ${SERVICE_NAME}"
+  echo ""
+  print_info "Yoki oddiy rejimda ishga tushiring:"
+  echo "  node index.js"
+fi
+
 echo ""
 echo -e "${GREEN}  ╔═══════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}  ║     Setup muvaffaqiyatli yakunlandi!          ║${NC}"
-echo -e "${GREEN}  ║     Bot ishga tushmoqda...                   ║${NC}"
 echo -e "${GREEN}  ╚═══════════════════════════════════════════════╝${NC}"
 echo ""
 echo "  Foydalanuvchi buyruqlari:"
@@ -240,9 +285,12 @@ echo "    /block <id>, /unblock <id>, /makeadmin <id>, /removeadmin <id>"
 echo "    /deletemember <id>, /givelicense <id>, /search <q>, /stats"
 echo "    /broadcast <text>, /roles, /setrole <id>, /ai, /setkey <key>"
 echo "    /setprovider <p>, /testai, /analyze, /backup"
+echo "    /setstartimage (reply), /setphoto <id> (reply)"
 echo "    /setabout <text>, /sethistory <text>"
 echo ""
-echo "  To'xtatish: Ctrl+C"
+echo "  systemd boshqaruvi:"
+echo "    sudo systemctl status wentric-bot"
+echo "    sudo systemctl restart wentric-bot"
+echo "    sudo systemctl stop wentric-bot"
+echo "    journalctl -u wentric-bot -f"
 echo ""
-
-exec node index.js
