@@ -87,6 +87,20 @@ bot.onText(/^\/start$/, async (msg) => {
   // Auto-register from group: if in DB already, just greet
   const member = await getMemberByTelegramId(userId);
 
+  // Auto-update name & username from Telegram
+  if (member) {
+    const tgName = (msg.from.first_name + " " + (msg.from.last_name || "")).trim();
+    const tgUsername = msg.from.username || null;
+    if (tgName && tgName !== member.full_name) {
+      db.run("UPDATE members SET full_name = ? WHERE id = ?", [tgName, member.id]);
+    }
+    if (tgUsername !== (member.username || null)) {
+      db.run("UPDATE members SET username = ? WHERE id = ?", [tgUsername, member.id]);
+    }
+    member.full_name = tgName;
+    member.username = tgUsername;
+  }
+
   const intro = `🏢 *wentric.uz rasmiy boti*
 
 Assalomu alaykum, ${msg.from.first_name || "Foydalanuvchi"}!
@@ -159,8 +173,10 @@ bot.onText(/^\/who(\s+\d+)?$/, async (msg, match) => {
 
   const member = await getMemberByTelegramId(targetId);
   if (!member) {
+    const tgUser = msg.reply_to_message?.from;
     const unknownMember = {
-      full_name: (msg.reply_to_message?.from?.first_name + " " + (msg.reply_to_message?.from?.last_name || "")).trim() || "Noma'lum",
+      full_name: (tgUser?.first_name + " " + (tgUser?.last_name || "")).trim() || "Noma'lum",
+      username: tgUser?.username || null,
       role: "Rezident emas / Noma'lum",
       license_number: "Berilmagan",
       joined_date: "—",
@@ -335,8 +351,17 @@ bot.onText(/^\/add$/, async (msg) => {
 bot.onText(/^\/add\s+(\d+)$/, async (msg, match) => {
   if (!(await isUserAdmin(msg.from.id))) return;
   const targetId = Number(match[1]);
-  setSession(msg.from.id, { action: "add_member", target_id: targetId, target_name: "—" });
-  bot.sendMessage(msg.chat.id, `Yangi a'zo Telegram ID: \`${targetId}\`\n\nYoshni kiriting (yoki -):`, { parse_mode: "Markdown" });
+  let targetName = "—";
+  let targetUsername = null;
+  try {
+    const chat = await bot.getChat(targetId);
+    if (chat) {
+      targetName = (chat.first_name + " " + (chat.last_name || "")).trim() || (chat.title || "—");
+      targetUsername = chat.username || null;
+    }
+  } catch {}
+  setSession(msg.from.id, { action: "add_member", target_id: targetId, target_name: targetName, target_username: targetUsername });
+  bot.sendMessage(msg.chat.id, `Yangi a'zo: *${targetName}*${targetUsername ? "\n🔗 @" + targetUsername : ""}\nTelegram ID: \`${targetId}\`\n\nYoshni kiriting (yoki -):`, { parse_mode: "Markdown" });
 });
 
 // ============================================================
