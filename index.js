@@ -494,12 +494,21 @@ bot.onText(/^\/stats$/, async (msg) => {
 // ============================================================
 bot.onText(/^\/assigntask$/, async (msg) => {
   if (!(await isUserAdmin(msg.from.id))) return;
-  if (!msg.reply_to_message) return bot.sendMessage(msg.chat.id, "Vazifa biriktirish uchun foydalanuvchiga reply qiling va /assigntask ni bosing.");
+  if (!msg.reply_to_message) return bot.sendMessage(msg.chat.id, "Vazifa biriktirish uchun foydalanuvchiga reply qiling va /assigntask ni bosing.\nYoki: /assigntask <telegram_id>");
   const target = msg.reply_to_message.from;
   const member = await getMemberByTelegramId(target.id);
   if (!member) return bot.sendMessage(msg.chat.id, "Bu foydalanuvchi ro'yxatda yo'q. Avval /add qiling.");
   setSession(msg.from.id, { action: "assign_task", member_id: member.id, member_name: member.full_name });
   bot.sendMessage(msg.chat.id, `📋 Vazifa biriktirish: *${member.full_name}*\n\nVazifa sarlavhasini kiriting:`, { parse_mode: "Markdown" });
+});
+
+bot.onText(/^\/assigntask\s+(\d+)$/, async (msg, match) => {
+  if (!(await isUserAdmin(msg.from.id))) return;
+  const tid = Number(match[1]);
+  const member = await getMemberByTelegramId(tid);
+  if (!member) return bot.sendMessage(msg.chat.id, `❌ ID ${tid} bo'yicha a'zo topilmadi.\nAvval /add <id> bilan qo'shing.`);
+  setSession(msg.from.id, { action: "assign_task", member_id: member.id, member_name: member.full_name });
+  bot.sendMessage(msg.chat.id, `📋 Vazifa biriktirish: *${member.full_name}* (ID: ${tid})\n\nVazifa sarlavhasini kiriting:`, { parse_mode: "Markdown" });
 });
 
 // ============================================================
@@ -842,7 +851,8 @@ bot.on("message", async (msg) => {
 
   if (text === "📋 Vazifa biriktirish") {
     if (!(await isUserAdmin(userId))) return;
-    bot.sendMessage(chatId, "Foydalanuvchiga reply qiling va /assigntask ni bosing.");
+    setSession(userId, { action: "assign_task_search" });
+    bot.sendMessage(chatId, "📋 Vazifa biriktirish\n\nA'zoning ismi yoki Telegram ID'sini kiriting:\n\nMisol: \`Spider-man\` yoki \`8708233476\`", { parse_mode: "Markdown" });
     return;
   }
 
@@ -961,28 +971,63 @@ bot.on("message", async (msg) => {
     return;
   }
 
+  // ---- Assign task: search member by name/ID ----
+  if (sess.action === "assign_task_search") {
+    const q = msg.text.trim();
+    const isNumeric = /^\d+$/.test(q);
+    const query = isNumeric ? Number(q) : q;
+    const member = await getMemberByTelegramId(query);
+    if (!member && isNumeric) {
+      bot.sendMessage(msg.chat.id, `❌ ID ${q} bo'yicha a'zo topilmadi.`);
+      clearSession(msg.from.id);
+      return;
+    }
+    if (!member && !isNumeric) {
+      db.all("SELECT * FROM members WHERE full_name LIKE ? ORDER BY id LIMIT 5", [`%${q}%`], (err, rows) => {
+        if (err || !rows?.length) {
+          bot.sendMessage(msg.chat.id, `❌ "${q}" bo'yicha a'zo topilmadi.`);
+          clearSession(msg.from.id);
+          return;
+        }
+        const buttons = rows.map((m) => [{
+          text: `${m.full_name} — ${m.role || "—"} (ID: ${m.telegram_id})`,
+          callback_data: `task_pick_${m.id}`,
+        }]);
+        bot.sendMessage(msg.chat.id, "Quyidagi a'zoni tanlang:", { reply_markup: { inline_keyboard: buttons } });
+        clearSession(msg.from.id);
+      });
+      return;
+    }
+    setSession(msg.from.id, { action: "assign_task", member_id: member.id, member_name: member.full_name });
+    bot.sendMessage(msg.chat.id, `📋 Vazifa biriktirish: *${member.full_name}*\n\nVazifa sarlavhasini kiriting:`, { parse_mode: "Markdown" });
+    return;
+  }
+
   // ---- Assign task: step 1 = title, step 2 = description, step 3 = deadline ----
   if (sess.action === "assign_task") {
     if (!sess.title) {
-      setSession(msg.from.id, { title: msg.text });
-      return bot.sendMessage(msg.chat.id, "Vazifa tavsifini kiriting (yoki -):");
+      setSession(msg.from.id, { ...sess, title: msg.text });
+      return bot.sendMessage(msg.chat.id, "📝 Vazifa tavsifini kiriting (yoki - belgisini yuboring):", { parse_mode: "Markdown" });
     }
     if (!sess.description) {
-      setSession(msg.from.id, { description: msg.text === "-" ? null : msg.text });
-      return bot.sendMessage(msg.chat.id, "Muddatni kiriting (YYYY-MM-DD yoki -):");
+      setSession(msg.from.id, { ...sess, description: msg.text === "-" ? null : msg.text });
+      return bot.sendMessage(msg.chat.id, "📅 Muddatni kiriting (YYYY-MM-DD formatida yoki - belgisi):", { parse_mode: "Markdown" });
     }
     if (!sess.deadline) {
       const deadline = msg.text === "-" ? null : msg.text;
+      const taskTitle = sess.title;
+      const taskDesc = sess.description;
+      const memberId = sess.member_id;
+      const memberName = sess.member_name;
       db.run(
         "INSERT INTO tasks (member_id, title, description, deadline, assigned_by) VALUES (?, ?, ?, ?, ?)",
-        [sess.member_id, sess.title, sess.description, deadline, msg.from.id],
+        [memberId, taskTitle, taskDesc, deadline, msg.from.id],
         function () {
           clearSession(msg.from.id);
-          bot.sendMessage(msg.chat.id, `✅ Vazifa biriktirildi: ${sess.title}\n👤 ${sess.member_name}`);
-          // Notify member
-          db.get("SELECT telegram_id FROM members WHERE id = ?", [sess.member_id], (e, m) => {
+          bot.sendMessage(msg.chat.id, `✅ *Vazifa biriktirildi*\n\n📌 Sarlavha: ${taskTitle}\n👤 A'zo: ${memberName}${deadline ? "\n📅 Muddat: " + deadline : ""}`, { parse_mode: "Markdown" });
+          db.get("SELECT telegram_id FROM members WHERE id = ?", [memberId], (e, m) => {
             if (m?.telegram_id) {
-              bot.sendMessage(m.telegram_id, `📋 Sizga yangi vazifa biriktirildi:\n\n*${sess.title}*\n${sess.description || ""}\n📅 ${deadline || "Muddat yo'q"}\n\n/mytasks — vazifalaringiz`, { parse_mode: "Markdown" });
+              bot.sendMessage(m.telegram_id, `📋 *Sizga yangi vazifa biriktirildi*\n\n📌 ${taskTitle}\n${taskDesc ? "📝 " + taskDesc + "\n" : ""}${deadline ? "📅 Muddat: " + deadline + "\n" : ""}\n/mytasks — vazifalaringiz`, { parse_mode: "Markdown" });
             }
           });
         }
@@ -1173,6 +1218,18 @@ bot.on("callback_query", async (cq) => {
   if (data === "cancel_action") {
     clearSession(userId);
     return bot.answerCallbackQuery(cq.id, { text: "Bekor qilindi" });
+  }
+
+  // ---- Pick member for task assignment ----
+  if (data.startsWith("task_pick_")) {
+    if (!(await isUserAdmin(userId))) return bot.answerCallbackQuery(cq.id, { text: "Faqat admin" });
+    const memberId = Number(data.replace("task_pick_", ""));
+    const member = await getMemberById(memberId);
+    if (!member) return bot.answerCallbackQuery(cq.id, { text: "Topilmadi" });
+    setSession(userId, { action: "assign_task", member_id: member.id, member_name: member.full_name });
+    bot.answerCallbackQuery(cq.id);
+    bot.sendMessage(chatId, `📋 Vazifa biriktirish: *${member.full_name}* (ID: ${member.telegram_id})\n\nVazifa sarlavhasini kiriting:`, { parse_mode: "Markdown" });
+    return;
   }
 
   // ---- Photo confirmation ----
