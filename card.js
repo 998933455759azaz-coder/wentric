@@ -7,66 +7,109 @@ function fmtDate(d) {
   } catch { return d; }
 }
 
-function esc(str) {
-  return String(str || "").replace(/[*_`\[\]]/g, "");
+function pad(str, width) {
+  str = String(str || "");
+  const len = [...str].length;
+  if (len >= width) return str;
+  return str + " ".repeat(width - len);
+}
+
+function center(str, width) {
+  const len = [...str].length;
+  if (len >= width) return str;
+  const left = Math.floor((width - len) / 2);
+  const right = width - len - left;
+  return " ".repeat(left) + str + " ".repeat(right);
 }
 
 function textCard(member, isUnknown = false) {
   const status = isUnknown
-    ? "⚠️ UNVERIFIED"
+    ? "Tekshirilmagan"
     : member.is_blocked
-      ? "🚫 BLOCKED"
-      : "🟢 ACTIVE";
-  const membership = member.is_resident ? "🏢 Resident" : "👤 Standard";
-  const name = member.full_name && member.full_name !== "—" ? member.full_name : "Unknown";
-  const username = member.username ? ` *@${esc(member.username)}*` : "";
+      ? "Bloklangan"
+      : "Faol";
+  const access = isUnknown
+    ? "Cheklangan"
+    : member.is_blocked
+      ? "Yo'q"
+      : member.is_admin
+        ? "To'liq"
+        : "Cheklangan";
+  const membership = member.is_resident ? "Rezident" : "Standart";
+  const name = member.full_name && member.full_name !== "—" ? member.full_name : "Noma'lum";
+  const username = member.username ? `@${member.username}` : "—";
+  const role = member.role || "Belgilanmagan";
+  const license = member.license_number || "Berilmagan";
+  const joined = fmtDate(member.joined_date);
+
+  const W = 42;
+  const line = "═".repeat(W);
+  const padW = W - 4;
 
   const rows = [
-    `👤 *Name:* ${esc(name)}${username}`,
-    `💼 *Role:* ${esc(member.role) || "—"}`,
-    `🪪 *License:* ${esc(member.license_number) || "Not Issued"}`,
-    `🆔 *ID:* \`${esc(member.telegram_id) || "—"}\``,
-    `🏅 *Type:* ${membership}`,
-    `🟢 *Status:* ${status}`,
-    `📅 *Joined:* ${fmtDate(member.joined_date)}`,
+    ["👤 Ism", name],
+    ["🔗 Username", username],
+    ["🆔 ID raqam", String(member.telegram_id || "—")],
+    ["🪪 Litsenziya", license],
+    ["💼 Lavozim", role],
+    ["🏅 Daraja", membership],
+    ["🟢 Holat", status],
+    ["🔒 Ruxsat", access],
+    ["📅 Qo'shilgan", joined],
+    ["⏰ Faollik", "Bugun"],
+    ["🌍 Hudud", "O'zbekiston"],
   ];
-  if (member.age) rows.push(`🎂 *Age:* ${esc(member.age)}`);
-  if (member.phone) rows.push(`📞 *Phone:* ${esc(member.phone)}`);
-  if (member.bio) rows.push(`📝 *Bio:* ${esc(member.bio)}`);
+  if (member.age) rows.push(["🎂 Yosh", String(member.age)]);
+  if (member.phone) rows.push(["📞 Telefon", member.phone]);
+  if (member.bio) rows.push(["📝 Bio", member.bio]);
 
-  return (
-    "┌──────────────────────────────┐\n" +
-    "│  🏢 *WENTRIC COMPANY*        │\n" +
-    "│  *Digital Identity Card*     │\n" +
-    "└──────────────────────────────┘\n\n" +
-    rows.join("\n") +
-    "\n\n© 2026 Wentric Company"
-  );
+  const lines = [];
+  lines.push(`╔${line}╗`);
+  lines.push(`║${center("🏢 WENTRIC COMPANY", W)}║`);
+  lines.push(`║${center("Korporativ ID Karta", W)}║`);
+  lines.push(`╠${line}╣`);
+  for (const [label, value] of rows) {
+    const row = pad(label, padW - [...value].length - 1) + " " + value;
+    lines.push(`║  ${pad(row, padW)}  ║`);
+  }
+  lines.push(`╠${line}╣`);
+  lines.push(`║${center("🌐 WENTRIC.UZ • 2026", W)}║`);
+  lines.push(`╚${line}╝`);
+  lines.push("© 2026 Wentric Company");
+
+  return "```\n" + lines.join("\n") + "\n```";
 }
 
 function taskCard(task, member) {
   const statusMap = {
-    pending: "⏳ Pending",
-    in_progress: "🔄 In Progress",
-    done: "✅ Completed",
-    cancelled: "❌ Cancelled",
+    pending: "⏳ Kutilmoqda",
+    in_progress: "🔄 Jarayonda",
+    done: "✅ Bajarildi",
+    cancelled: "❌ Bekor qilindi",
   };
   const st = statusMap[task.status] || statusMap.pending;
 
   const rows = [
-    `📌 *Title:* ${esc(task.title) || "—"}`,
-    `👤 *Assigned:* ${esc(member?.full_name) || "—"}`,
-    `📅 *Deadline:* ${task.deadline ? fmtDate(task.deadline) : "—"}`,
-    `📊 *Status:* ${st}`,
-    `🆔 *Task ID:* #${esc(task.id)}`,
+    `📌 Sarlavha:  ${task.title || "—"}`,
+    `👤 Biriktirilgan: ${member?.full_name || "—"}`,
+    `📅 Muddat:    ${task.deadline ? fmtDate(task.deadline) : "—"}`,
+    `📊 Holat:     ${st}`,
+    `🆔 Vazifa ID: #${task.id}`,
   ];
 
-  return (
-    "┌──────────────────────────────┐\n" +
-    "│  📋 *WENTRIC TASK*            │\n" +
-    "└──────────────────────────────┘\n\n" +
-    rows.join("\n")
-  );
+  const W = 42;
+  const line = "═".repeat(W);
+
+  const lines = [];
+  lines.push(`╔${line}╗`);
+  lines.push(`║${center("📋 WENTRIC VAZIFA", W)}║`);
+  lines.push(`╠${line}╣`);
+  for (const r of rows) {
+    lines.push(`║  ${pad(r, W - 4)}  ║`);
+  }
+  lines.push(`╚${line}╝`);
+
+  return "```\n" + lines.join("\n") + "\n```";
 }
 
 module.exports = { textCard, taskCard };
