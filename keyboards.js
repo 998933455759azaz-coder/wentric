@@ -7,7 +7,9 @@ function mainMenu() {
     reply_markup: {
       keyboard: [
         ["👤 Mening profilim", "📊 Dashboard"],
-        ["📋 Mening vazifalarim", "🏢 Jamoa haqida"],
+        ["📋 Mening vazifalarim", "📊 Mening reytingim"],
+        ["🏢 Jamoa haqida", "🎯 Loyihalar"],
+        ["👥 Guruhlar", "💰 Mukofotlarim"],
         ["📜 Tarix", "🪪 Litsenziya"],
       ],
       resize_keyboard: true,
@@ -25,6 +27,8 @@ function adminPanel() {
         ["🚫 Bloklash", "✅ Blokdan chiqarish"],
         ["🔑 Admin berish", "❌ Admin olish"],
         ["📋 Vazifa biriktirish", "📋 Vazifalar ro'yxati"],
+        ["📊 Reyting taxtasi", "👁 Mira hisoboti"],
+        ["💰 Mukofot berish", "👥 Guruhlar"],
         ["🪪 Litsenziya berish", "🎭 Rollar"],
         ["🤖 AI sozlash", "⚙️ Sozlamalar"],
         ["🖼 Start rasmi", "📢 Xabar yuborish"],

@@ -2,7 +2,7 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const cron = require("node-cron");
 const fs = require("fs");
-const { db, init, DB_PATH, ROLES, getSetting, setSetting } = require("./db");
+const { db, init, DB_PATH, ROLES, GROUPS, PROJECTS, getSetting, setSetting, getMemberRating, getGroupRating, addRatingPoints } = require("./db");
 const { textCard, taskCard } = require("./card");
 const { analyzeMessages, testAI } = require("./ai");
 const {
@@ -301,6 +301,189 @@ bot.onText(/^\/taskstatus\s+(\d+)$/, async (msg, match) => {
       parse_mode: "Markdown",
       reply_markup: taskStatusInline(taskId),
     });
+  });
+});
+
+// ============================================================
+// /myrating — show own rating
+// ============================================================
+bot.onText(/^\/myrating$/, async (msg) => {
+  const member = await getMemberByTelegramId(msg.from.id);
+  if (!member) return bot.sendMessage(msg.chat.id, "Siz ro'yxatda emassiz.");
+  const total = await getMemberRating(member.id);
+  const week = await getMemberRating(member.id, "week");
+  const month = await getMemberRating(member.id, "month");
+  let groupName = "—";
+  if (member.group_id) {
+    const g = await new Promise((res) => db.get("SELECT name FROM groups WHERE id = ?", [member.group_id], (e, r) => res(r)));
+    if (g) groupName = g.name;
+  }
+  bot.sendMessage(
+    msg.chat.id,
+    `📊 *Sizning reytingingiz*\n\n👤 ${member.full_name}\n👥 Guruh: ${groupName}\n\n🏆 Jami: *${total}* ball\n📅 Oyma-oy: *${month}* ball\n🗓 Haftalik: *${week}* ball\n\n💡 Vazifani o'z vaqtida bajaring — +10 ball\n⚠️ Kech bajarsangiz — +5 ball\n❌ Bekor qilsangiz — -3 ball`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ============================================================
+// /rating — admin: full rating board
+// ============================================================
+bot.onText(/^\/rating$/, async (msg) => {
+  if (!(await isUserAdmin(msg.from.id))) return;
+  db.all("SELECT id, name, lead FROM groups ORDER BY id", async (err, groups) => {
+    let text = "📊 *WENTRIC REYTING TAXTASI*\n\n";
+    for (const g of groups) {
+      const gr = await getGroupRating(g.id);
+      text += `👥 *${g.name}* (lead: ${g.lead})\n   Ball: ${gr.total} | Vazifalar: ${gr.count}\n\n`;
+    }
+    db.all(
+      `SELECT m.id, m.full_name, m.group_id, COALESCE(SUM(r.points), 0) as total
+       FROM members m LEFT JOIN rating_log r ON r.member_id = m.id
+       WHERE m.is_blocked = 0
+       GROUP BY m.id ORDER BY total DESC LIMIT 20`,
+      async (err2, members) => {
+        if (members?.length) {
+          text += "🏆 *Top-20 a'zolar:*\n";
+          for (let i = 0; i < members.length; i++) {
+            const m = members[i];
+            let gname = "—";
+            if (m.group_id) {
+              const g = groups.find((x) => x.id === m.group_id);
+              if (g) gname = g.name;
+            }
+            text += `${i + 1}. ${m.full_name} (${gname}) — ${m.total} ball\n`;
+          }
+        }
+        bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+      }
+    );
+  });
+});
+
+// ============================================================
+// /groups — list all groups
+// ============================================================
+bot.onText(/^\/groups$/, async (msg) => {
+  db.all("SELECT * FROM groups ORDER BY id", (err, rows) => {
+    if (err || !rows?.length) return bot.sendMessage(msg.chat.id, "Guruhlar topilmadi.");
+    const list = rows.map((g, i) => `${i + 1}. *${g.name}*\n   👤 Lead: ${g.lead}\n   📝 ${g.description || "—"}`).join("\n\n");
+    bot.sendMessage(msg.chat.id, `👥 *Wentric guruhlari:*\n\n${list}`, { parse_mode: "Markdown" });
+  });
+});
+
+// ============================================================
+// /setgroup <member_id> <group_id> — admin assigns member to group
+// ============================================================
+bot.onText(/^\/setgroup\s+(\d+)\s+(\d+)$/, async (msg, match) => {
+  if (!(await isUserAdmin(msg.from.id))) return;
+  const tid = Number(match[1]);
+  const gid = Number(match[2]);
+  const member = await getMemberByTelegramId(tid);
+  if (!member) return bot.sendMessage(msg.chat.id, `❌ A'zo ${tid} topilmadi.`);
+  db.run("UPDATE members SET group_id = ? WHERE id = ?", [gid, member.id], function () {
+    db.get("SELECT name FROM groups WHERE id = ?", [gid], (e, g) => {
+      bot.sendMessage(msg.chat.id, `✅ ${member.full_name} → *${g?.name || "?"}* guruhiga biriktirildi.`, { parse_mode: "Markdown" });
+    });
+  });
+});
+
+// ============================================================
+// /rewards — show rewards
+// ============================================================
+bot.onText(/^\/rewards$/, async (msg) => {
+  const member = await getMemberByTelegramId(msg.from.id);
+  if (!member) return bot.sendMessage(msg.chat.id, "Siz ro'yxatda emassiz.");
+  db.all("SELECT * FROM rewards WHERE member_id = ? ORDER BY granted_at DESC LIMIT 10", [member.id], (err, rows) => {
+    if (err || !rows?.length) return bot.sendMessage(msg.chat.id, "Sizga hozircha mukofot berilmagan.");
+    const list = rows.map((r, i) => `${i + 1}. ${r.amount} so'm\n   📝 ${r.reason || "—"}\n   📅 ${r.period || "—"}`).join("\n\n");
+    bot.sendMessage(msg.chat.id, `💰 *Sizning mukofotlaringiz:*\n\n${list}`, { parse_mode: "Markdown" });
+  });
+});
+
+// ============================================================
+// /reward <member_id> <amount> <reason> — admin grants reward
+// ============================================================
+bot.onText(/^\/reward\s+(\d+)\s+(\d+(?:\.\d+)?)\s+(.+)$/, async (msg, match) => {
+  if (!(await isUserAdmin(msg.from.id))) return;
+  const tid = Number(match[1]);
+  const amount = Number(match[2]);
+  const reason = match[3].trim();
+  const member = await getMemberByTelegramId(tid);
+  if (!member) return bot.sendMessage(msg.chat.id, `❌ A'zo ${tid} topilmadi.`);
+  const period = new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  db.run(
+    "INSERT INTO rewards (member_id, amount, reason, period, granted_by) VALUES (?, ?, ?, ?, ?)",
+    [member.id, amount, reason, period, msg.from.id],
+    function () {
+      bot.sendMessage(msg.chat.id, `✅ *Mukofot berildi*\n\n👤 ${member.full_name}\n💰 ${amount} so'm\n📝 ${reason}\n📅 ${period}`, { parse_mode: "Markdown" });
+      if (member.telegram_id) {
+        bot.sendMessage(member.telegram_id, `🎉 *Sizga mukofot berildi!*\n\n💰 ${amount} so'm\n📝 ${reason}\n📅 ${period}`, { parse_mode: "Markdown" });
+      }
+    }
+  );
+});
+
+// ============================================================
+// /mira — Mira weekly/monthly report
+// ============================================================
+bot.onText(/^\/mira$/, async (msg) => {
+  if (!(await isUserAdmin(msg.from.id))) return;
+  await bot.sendChatAction(msg.chat.id, "typing");
+  db.all("SELECT id, name, lead FROM groups ORDER BY id", async (err, groups) => {
+    let report = "👁 *MIRA — KUZATUV HISOBOTI*\n\n";
+    report += `📅 Sana: ${new Date().toLocaleDateString("en-GB")}\n\n`;
+    for (const g of groups) {
+      const gr = await getGroupRating(g.id, "week");
+      const grMonth = await getGroupRating(g.id, "month");
+      report += `👥 *${g.name}* (lead: ${g.lead})\n`;
+      report += `   Hafta: ${gr.total} ball (${gr.count} vazifa)\n`;
+      report += `   Oy: ${grMonth.total} ball (${grMonth.count} vazifa)\n\n`;
+    }
+    db.all(
+      `SELECT m.full_name, m.group_id,
+        COUNT(t.id) as total_tasks,
+        SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done,
+        SUM(CASE WHEN t.status='pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END) as in_prog,
+        SUM(CASE WHEN t.status='cancelled' THEN 1 ELSE 0 END) as cancelled,
+        COALESCE(SUM(r.points), 0) as rating
+       FROM members m
+       LEFT JOIN tasks t ON t.member_id = m.id
+       LEFT JOIN rating_log r ON r.member_id = m.id
+       WHERE m.is_blocked = 0
+       GROUP BY m.id ORDER BY rating DESC LIMIT 10`,
+      (err2, members) => {
+        if (members?.length) {
+          report += "🏆 *Top-10 a'zolar (Mira tahlili):*\n";
+          for (let i = 0; i < members.length; i++) {
+            const m = members[i];
+            let gname = "—";
+            if (m.group_id) {
+              const g = groups.find((x) => x.id === m.group_id);
+              if (g) gname = g.name;
+            }
+            report += `${i + 1}. ${m.full_name} (${gname})\n`;
+            report += `   ✅${m.done || 0} 🔄${m.in_prog || 0} ⏳${m.pending || 0} ❌${m.cancelled || 0} | ${m.rating || 0} ball\n`;
+          }
+        }
+        report += "\n💡 Mira eslatmasi: O'z vaqtida bajaring, tahliliy hisobot bering, mukofot oling!";
+        bot.sendMessage(msg.chat.id, report, { parse_mode: "Markdown" });
+      }
+    );
+  });
+});
+
+// ============================================================
+// /projects — list all Wentric projects
+// ============================================================
+bot.onText(/^\/projects$/, (msg) => {
+  db.all("SELECT * FROM projects ORDER BY id", (err, rows) => {
+    if (err || !rows?.length) return bot.sendMessage(msg.chat.id, "Loyihalar topilmadi.");
+    const list = rows.map((p, i) => {
+      const statusIcon = p.status === "active" ? "🟢" : p.status === "beta" ? "🟡" : "⚪";
+      return `${i + 1}. ${statusIcon} *${p.name}*\n${p.slogan ? "   💬 \"" + p.slogan + "\"\n" : ""}   📝 ${p.description || "—"}`;
+    }).join("\n\n");
+    bot.sendMessage(msg.chat.id, `🎯 *Wentric loyihalari:*\n\n${list}`, { parse_mode: "Markdown" });
   });
 });
 
@@ -935,6 +1118,153 @@ bot.on("message", async (msg) => {
     return;
   }
 
+  if (text === "📊 Reyting taxtasi") {
+    if (!(await isUserAdmin(userId))) return;
+    db.all("SELECT id, name, lead FROM groups ORDER BY id", async (err, groups) => {
+      let text2 = "📊 *WENTRIC REYTING TAXTASI*\n\n";
+      for (const g of groups) {
+        const gr = await getGroupRating(g.id);
+        text2 += `👥 *${g.name}* (lead: ${g.lead})\n   Ball: ${gr.total} | Vazifalar: ${gr.count}\n\n`;
+      }
+      db.all(
+        `SELECT m.id, m.full_name, m.group_id, COALESCE(SUM(r.points), 0) as total
+         FROM members m LEFT JOIN rating_log r ON r.member_id = m.id
+         WHERE m.is_blocked = 0
+         GROUP BY m.id ORDER BY total DESC LIMIT 20`,
+        async (err2, members) => {
+          if (members?.length) {
+            text2 += "🏆 *Top-20 a'zolar:*\n";
+            for (let i = 0; i < members.length; i++) {
+              const m = members[i];
+              let gname = "—";
+              if (m.group_id) {
+                const g = groups.find((x) => x.id === m.group_id);
+                if (g) gname = g.name;
+              }
+              text2 += `${i + 1}. ${m.full_name} (${gname}) — ${m.total} ball\n`;
+            }
+          }
+          bot.sendMessage(chatId, text2, { parse_mode: "Markdown" });
+        }
+      );
+    });
+    return;
+  }
+
+  if (text === "👁 Mira hisoboti") {
+    if (!(await isUserAdmin(userId))) return;
+    await bot.sendChatAction(chatId, "typing");
+    db.all("SELECT id, name, lead FROM groups ORDER BY id", async (err, groups) => {
+      let report = "👁 *MIRA — KUZATUV HISOBOTI*\n\n";
+      report += `📅 Sana: ${new Date().toLocaleDateString("en-GB")}\n\n`;
+      for (const g of groups) {
+        const gr = await getGroupRating(g.id, "week");
+        const grMonth = await getGroupRating(g.id, "month");
+        report += `👥 *${g.name}* (lead: ${g.lead})\n`;
+        report += `   Hafta: ${gr.total} ball (${gr.count} vazifa)\n`;
+        report += `   Oy: ${grMonth.total} ball (${grMonth.count} vazifa)\n\n`;
+      }
+      db.all(
+        `SELECT m.full_name, m.group_id,
+          COUNT(t.id) as total_tasks,
+          SUM(CASE WHEN t.status='done' THEN 1 ELSE 0 END) as done,
+          SUM(CASE WHEN t.status='pending' THEN 1 ELSE 0 END) as pending,
+          SUM(CASE WHEN t.status='in_progress' THEN 1 ELSE 0 END) as in_prog,
+          SUM(CASE WHEN t.status='cancelled' THEN 1 ELSE 0 END) as cancelled,
+          COALESCE(SUM(r.points), 0) as rating
+         FROM members m
+         LEFT JOIN tasks t ON t.member_id = m.id
+         LEFT JOIN rating_log r ON r.member_id = m.id
+         WHERE m.is_blocked = 0
+         GROUP BY m.id ORDER BY rating DESC LIMIT 10`,
+        (err2, members) => {
+          if (members?.length) {
+            report += "🏆 *Top-10 a'zolar (Mira tahlili):*\n";
+            for (let i = 0; i < members.length; i++) {
+              const m = members[i];
+              let gname = "—";
+              if (m.group_id) {
+                const g = groups.find((x) => x.id === m.group_id);
+                if (g) gname = g.name;
+              }
+              report += `${i + 1}. ${m.full_name} (${gname})\n`;
+              report += `   ✅${m.done || 0} 🔄${m.in_prog || 0} ⏳${m.pending || 0} ❌${m.cancelled || 0} | ${m.rating || 0} ball\n`;
+            }
+          }
+          report += "\n💡 Mira eslatmasi: O'z vaqtida bajaring, tahliliy hisobot bering, mukofot oling!";
+          bot.sendMessage(chatId, report, { parse_mode: "Markdown" });
+        }
+      );
+    });
+    return;
+  }
+
+  if (text === "💰 Mukofot berish") {
+    if (!(await isUserAdmin(userId))) return;
+    bot.sendMessage(chatId, "💰 *Mukofot berish*\n\nFormat: /reward <telegram_id> <summa> <sabab>\n\nMisol: `/reward 8708233476 500000 Sayt dizayni uchun`", { parse_mode: "Markdown" });
+    return;
+  }
+
+  if (text === "👥 Guruhlar") {
+    db.all("SELECT * FROM groups ORDER BY id", (err, rows) => {
+      if (err || !rows?.length) return bot.sendMessage(chatId, "Guruhlar topilmadi.");
+      const list = rows.map((g, i) => `${i + 1}. *${g.name}*\n   👤 Lead: ${g.lead}\n   📝 ${g.description || "—"}`).join("\n\n");
+      bot.sendMessage(chatId, `👥 *Wentric guruhlari:*\n\n${list}`, { parse_mode: "Markdown" });
+    });
+    return;
+  }
+
+  if (text === "📊 Mening reytingim") {
+    const member = await getMemberByTelegramId(userId);
+    if (!member) return bot.sendMessage(chatId, "Siz ro'yxatda emassiz.");
+    const total = await getMemberRating(member.id);
+    const week = await getMemberRating(member.id, "week");
+    const month = await getMemberRating(member.id, "month");
+    let groupName = "—";
+    if (member.group_id) {
+      const g = await new Promise((res) => db.get("SELECT name FROM groups WHERE id = ?", [member.group_id], (e, r) => res(r)));
+      if (g) groupName = g.name;
+    }
+    bot.sendMessage(
+      chatId,
+      `📊 *Sizning reytingingiz*\n\n👤 ${member.full_name}\n👥 Guruh: ${groupName}\n\n🏆 Jami: *${total}* ball\n📅 Oyma-oy: *${month}* ball\n🗓 Haftalik: *${week}* ball\n\n💡 Vazifani o'z vaqtida bajaring — +10 ball\n⚠️ Kech bajarsangiz — +5 ball\n❌ Bekor qilsangiz — -3 ball`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+
+  if (text === "🎯 Loyihalar") {
+    db.all("SELECT * FROM projects ORDER BY id", (err, rows) => {
+      if (err || !rows?.length) return bot.sendMessage(chatId, "Loyihalar topilmadi.");
+      const list = rows.map((p, i) => {
+        const statusIcon = p.status === "active" ? "🟢" : p.status === "beta" ? "🟡" : "⚪";
+        return `${i + 1}. ${statusIcon} *${p.name}*\n${p.slogan ? "   💬 \"" + p.slogan + "\"\n" : ""}   📝 ${p.description || "—"}`;
+      }).join("\n\n");
+      bot.sendMessage(chatId, `🎯 *Wentric loyihalari:*\n\n${list}`, { parse_mode: "Markdown" });
+    });
+    return;
+  }
+
+  if (text === "💰 Mukofotlarim") {
+    const member = await getMemberByTelegramId(userId);
+    if (!member) return bot.sendMessage(chatId, "Siz ro'yxatda emassiz.");
+    db.all("SELECT * FROM rewards WHERE member_id = ? ORDER BY granted_at DESC LIMIT 10", [member.id], (err, rows) => {
+      if (err || !rows?.length) return bot.sendMessage(chatId, "Sizga hozircha mukofot berilmagan.");
+      const list = rows.map((r, i) => `${i + 1}. ${r.amount} so'm\n   📝 ${r.reason || "—"}\n   📅 ${r.period || "—"}`).join("\n\n");
+      bot.sendMessage(chatId, `💰 *Sizning mukofotlaringiz:*\n\n${list}`, { parse_mode: "Markdown" });
+    });
+    return;
+  }
+
+  if (text === "👥 Guruhlar") {
+    db.all("SELECT * FROM groups ORDER BY id", (err, rows) => {
+      if (err || !rows?.length) return bot.sendMessage(chatId, "Guruhlar topilmadi.");
+      const list = rows.map((g, i) => `${i + 1}. *${g.name}*\n   👤 Lead: ${g.lead}\n   📝 ${g.description || "—"}`).join("\n\n");
+      bot.sendMessage(chatId, `👥 *Wentric guruhlari:*\n\n${list}`, { parse_mode: "Markdown" });
+    });
+    return;
+  }
+
   if (text === "🏠 Bosh menyu") {
     bot.sendMessage(chatId, "🏠 Bosh menyu", mainMenu());
     return;
@@ -1111,13 +1441,35 @@ bot.on("callback_query", async (cq) => {
     const status = parts[1];
     const member = await getMemberByTelegramId(userId);
     if (!member) return bot.answerCallbackQuery(cq.id, { text: "Ro'yxatda emassiz" });
-    db.run("UPDATE tasks SET status = ? WHERE id = ? AND member_id = ?", [status, taskId, member.id], function () {
-      if (this.changes) {
-        bot.editMessageText(`✅ Vazifa #${taskId} holati: ${status}`, { chat_id: chatId, message_id: msgId });
-        bot.answerCallbackQuery(cq.id, { text: "Yangilandi" });
-      } else {
-        bot.answerCallbackQuery(cq.id, { text: "Vazifa topilmadi" });
+    db.run("UPDATE tasks SET status = ? WHERE id = ? AND member_id = ?", [status, taskId, member.id], async function () {
+      if (!this.changes) return bot.answerCallbackQuery(cq.id, { text: "Vazifa topilmadi" });
+
+      let points = 0;
+      let reason = "";
+      if (status === "done") {
+        const task = await new Promise((res) => db.get("SELECT * FROM tasks WHERE id = ?", [taskId], (e, r) => res(r)));
+        if (task) {
+          const onTime = !task.deadline || new Date() <= new Date(task.deadline);
+          if (onTime) {
+            points = 10;
+            reason = "Vazifa o'z vaqtida bajarildi";
+          } else {
+            points = 5;
+            reason = "Vazifa kech bajarildi";
+          }
+          db.run("UPDATE tasks SET completed_at = datetime('now'), score = ? WHERE id = ?", [points, taskId]);
+          await addRatingPoints(member.id, taskId, points, reason);
+        }
+      } else if (status === "cancelled") {
+        points = -3;
+        reason = "Vazifa bekor qilindi";
+        await addRatingPoints(member.id, taskId, points, reason);
       }
+
+      let text = `✅ Vazifa #${taskId} holati: ${status}`;
+      if (points !== 0) text += `\n📊 Reyting: ${points > 0 ? "+" : ""}${points} ball (${reason})`;
+      bot.editMessageText(text, { chat_id: chatId, message_id: msgId });
+      bot.answerCallbackQuery(cq.id, { text: "Yangilandi" });
     });
     return;
   }
